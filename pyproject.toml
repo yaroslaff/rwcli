@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rw-cli"
+version = "0.1.0"
+description = "CLI для Remnawave (сквады, пользователи, создание/удаление) поверх rw-sdk"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "rw-sdk>=3.3.2",
+]
+keywords = ["remnawave", "vpn", "cli", "xray"]
+
+[project.scripts]
+rwcli = "rwcli:main"
+
+[tool.setuptools]
+py-modules = ["rwcli"]
