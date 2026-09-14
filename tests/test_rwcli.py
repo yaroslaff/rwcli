@@ -1,4 +1,3 @@
-from argparse import Namespace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -34,7 +33,7 @@ def parse(*argv):
     return rwcli.build_parser().parse_args(list(argv))
 
 
-# ---------- конфиг ----------
+# ---------- config ----------
 
 def test_load_env(tmp_path):
     f = tmp_path / ".env"
@@ -67,11 +66,11 @@ def test_get_client_missing(tmp_path, monkeypatch):
 
 def test_get_client_markdown_url(monkeypatch):
     monkeypatch.setattr(rwcli, "Remnawave", MagicMock())
-    with pytest.raises(SystemExit, match="битым"):
+    with pytest.raises(SystemExit, match="looks broken"):
         rwcli.get_client(parse("-u", "[x](https://x)", "-t", "t", "squads"))
 
 
-# ---------- утилиты ----------
+# ---------- helpers ----------
 
 @pytest.mark.parametrize("n, expected", [
     (None, "-"),
@@ -134,11 +133,11 @@ def test_die_on_api_error_not_found():
     def boom():
         raise exc
 
-    with pytest.raises(SystemExit, match="Не найдено: A063"):
+    with pytest.raises(SystemExit, match="Not found: A063"):
         boom()
 
 
-# ---------- команды ----------
+# ---------- commands ----------
 
 def test_users_fields_tsv(capsys):
     rw = MagicMock()
@@ -148,7 +147,7 @@ def test_users_fields_tsv(capsys):
 
 
 def test_users_unknown_field():
-    with pytest.raises(SystemExit, match="Неизвестные поля: bogus"):
+    with pytest.raises(SystemExit, match="Unknown fields: bogus"):
         rwcli.cmd_users(MagicMock(), parse("users", "-f", "username,bogus"))
 
 
@@ -156,7 +155,28 @@ def test_users_empty(capsys):
     rw = MagicMock()
     rw.users.iter_users.return_value = []
     rwcli.cmd_users(rw, parse("users"))
-    assert "не найдены" in capsys.readouterr().err
+    assert "No users found" in capsys.readouterr().err
+
+
+def test_users_squad_filter(capsys):
+    rw = MagicMock()
+    other = make_squad("Other", "99999999-2222-3333-4444-555555555555")
+    rw.internal_squads.get_internal_squads.return_value.internal_squads = [make_squad("TnnlsPromo"), other]
+    rw.users.iter_users.return_value = [
+        make_user(username="alice", active_internal_squads=[make_squad("TnnlsPromo")]),
+        make_user(username="bob", active_internal_squads=[other]),
+        make_user(username="carol", active_internal_squads=None),
+    ]
+    rwcli.cmd_users(rw, parse("users", "-s", "tnnlspromo", "-f", "username"))
+    assert capsys.readouterr().out == "alice\n"
+
+
+def test_users_squad_filter_unknown():
+    rw = MagicMock()
+    rw.internal_squads.get_internal_squads.return_value.internal_squads = [make_squad("TnnlsPromo")]
+    with pytest.raises(SystemExit, match="Squad\\(s\\) not found: nope"):
+        rwcli.cmd_users(rw, parse("users", "-s", "nope"))
+    rw.users.iter_users.assert_not_called()
 
 
 def test_create(capsys):
@@ -172,7 +192,30 @@ def test_create(capsys):
     assert kw["traffic_limit_bytes"] == 2 * 1024 ** 3
     delta = kw["expire_at"] - datetime.now(timezone.utc)
     assert timedelta(days=9, hours=23) < delta <= timedelta(days=10)
-    assert "Создан пользователь" in capsys.readouterr().out
+    assert "Created user" in capsys.readouterr().out
+
+
+def test_create_omits_unset_optional_fields():
+    rw = MagicMock()
+    rw.users.create_user.return_value = make_user(username="bob")
+
+    rwcli.cmd_create(rw, parse("create", "bob", "-n"))
+
+    kw = rw.users.create_user.call_args.kwargs
+    for key in ("description", "telegram_id", "active_internal_squads"):
+        assert key not in kw
+
+
+def test_die_on_api_error_validation():
+    body = {"errors": [{"path": ["user", "description"], "message": "expected string"}]}
+    exc = errors.ValidationError("bad", response=SimpleNamespace(status_code=400), body=body)
+
+    @rwcli.die_on_api_error
+    def boom():
+        raise exc
+
+    with pytest.raises(SystemExit, match=r"^Validation error: user\.description: expected string$"):
+        boom()
 
 
 def test_delete_cancelled(monkeypatch):
@@ -181,6 +224,50 @@ def test_delete_cancelled(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "n")
     rwcli.cmd_delete(rw, parse("delete", "alice"))
     rw.users.delete_user.assert_not_called()
+
+
+def not_found():
+    return errors.NotFoundError("not found", response=SimpleNamespace(status_code=404), body={})
+
+
+def test_resolve_short_uuid_url():
+    rw = MagicMock()
+    assert rwcli.resolve_short_uuid(rw, "https://sub.example.com/api/sub/AbC123/?x=1") == "AbC123"
+    rw.users.get_user_by_username.assert_not_called()
+
+
+def test_resolve_short_uuid_username():
+    rw = MagicMock()
+    rw.users.get_user_by_username.return_value = make_user(short_uuid="AbC123")
+    assert rwcli.resolve_short_uuid(rw, "alice") == "AbC123"
+
+
+def test_resolve_short_uuid_fallback():
+    rw = MagicMock()
+    rw.users.get_user_by_username.side_effect = not_found()
+    assert rwcli.resolve_short_uuid(rw, "AbC123") == "AbC123"
+
+
+def test_servers_pretty(capsys):
+    rw = MagicMock()
+    rw.users.get_user_by_username.return_value = make_user(short_uuid="AbC123")
+    cfg = SimpleNamespace(final_remark="🇩🇪 Germany", protocol=SimpleNamespace(value="vless"),
+                          address="de1.example.com", port=443)
+    rw.subscriptions.get_raw_subscription_by_short_uuid.return_value.resolved_proxy_configs = [
+        SimpleNamespace(root=cfg)
+    ]
+    rwcli.cmd_servers(rw, parse("servers", "alice"))
+    rw.subscriptions.get_raw_subscription_by_short_uuid.assert_called_once_with("AbC123")
+    out = capsys.readouterr().out
+    assert "🇩🇪 Germany" in out and "vless" in out and "de1.example.com:443" in out
+
+
+def test_servers_raw(capsys):
+    rw = MagicMock()
+    rw.subscriptions.get_subscription_by_short_uuid_protected.return_value.links = ["vless://a", "vless://b"]
+    rwcli.cmd_servers(rw, parse("servers", "https://sub.example.com/AbC123", "--raw"))
+    rw.subscriptions.get_subscription_by_short_uuid_protected.assert_called_once_with("AbC123")
+    assert capsys.readouterr().out == "vless://a\nvless://b\n"
 
 
 def test_delete_yes():

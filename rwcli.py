@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Простой CLI для Remnawave поверх rw-sdk.
+Simple CLI for Remnawave built on top of rw-sdk.
 
-Установка:
-    pip install rw-sdk --break-system-packages   # или в venv
+Install:
+    pip install rw-sdk --break-system-packages   # or into a venv
 
-Настройка (.env в текущем каталоге, или -e path/-u URL/-t TOKEN):
+Config (.env in the current directory, or -e path/-u URL/-t TOKEN):
     PANEL_URL="https://rw.example.com"
     API_TOKEN="eyJ...."
 
-Команды:
-    rwcli squads                    # список сквадов
-    rwcli users [-q TEXT] [-f F,..] # список юзеров (фильтр по username)
-    rwcli user <username>           # инфо по одному юзеру
-    rwcli create <username> [опции] # создать юзера
-    rwcli delete <username> [-y]    # удалить юзера
+Commands:
+    rwcli squads                            # list squads
+    rwcli users [-q TEXT] [-s SQUAD] [-f F] # list users (filter by username/squad)
+    rwcli user <username>                   # show one user
+    rwcli create <username> [options]       # create a user
+    rwcli delete <username> [-y]            # delete a user
+    rwcli servers <user> [--raw]            # subscription servers (user: username/URL/short_uuid)
 """
 
 import argparse
@@ -26,10 +27,10 @@ from pathlib import Path
 from rw_sdk import Remnawave, errors
 
 
-# ---------- конфиг ----------
+# ---------- config ----------
 
 def load_env(path: Path) -> dict:
-    """Простой парсер KEY="value" из .env, без внешних зависимостей."""
+    """Minimal KEY="value" parser for .env, no external dependencies."""
     data = {}
     if not path.exists():
         return data
@@ -49,16 +50,16 @@ def get_client(args) -> Remnawave:
 
     if not panel_url or not token:
         sys.exit(
-            f"Не найден PANEL_URL / API_TOKEN. Проверьте {args.env_file}, "
-            "переменные окружения или флаги --panel-url/--token."
+            f"PANEL_URL / API_TOKEN not found. Check {args.env_file}, "
+            "environment variables or --panel-url/--token flags."
         )
     if panel_url.startswith("[") or "](" in panel_url:
-        sys.exit(f"PANEL_URL выглядит битым (похоже на markdown-ссылку): {panel_url!r}")
+        sys.exit(f"PANEL_URL looks broken (like a markdown link): {panel_url!r}")
 
     return Remnawave(panel_url, token=token)
 
 
-# ---------- утилиты вывода ----------
+# ---------- output helpers ----------
 
 def fmt_bytes(n) -> str:
     if n is None:
@@ -74,7 +75,7 @@ def fmt_bytes(n) -> str:
 
 
 def fmt_limit(n) -> str:
-    """Лимит трафика: 0 в Remnawave означает безлимит."""
+    """Traffic limit: 0 means unlimited in Remnawave."""
     return "∞" if n == 0 else fmt_bytes(n)
 
 
@@ -89,26 +90,28 @@ def die_on_api_error(fn):
         try:
             return fn(*a, **kw)
         except errors.NotFoundError as e:
-            sys.exit(f"Не найдено: {e.error_code} {e.error}")
+            sys.exit(f"Not found: {e.error_code} {e.error}")
         except errors.ValidationError as e:
-            msgs = "; ".join(f"{i['path']}: {i['message']}" for i in e.errors)
-            sys.exit(f"Ошибка валидации: {msgs}")
+            msgs = "; ".join(
+                f"{'.'.join(str(p) for p in i.get('path', []))}: {i.get('message')}" for i in e.errors
+            )
+            sys.exit(f"Validation error: {msgs}")
         except errors.PermissionDeniedError:
-            sys.exit("Доступ запрещён: у токена нет прав на это действие.")
+            sys.exit("Permission denied: the token has no rights for this action.")
         except errors.APIConnectionError as e:
-            sys.exit(f"Не удалось подключиться к панели: {e}")
+            sys.exit(f"Cannot connect to the panel: {e}")
         except errors.RemnawaveError as e:
-            sys.exit(f"Ошибка API: {e}")
+            sys.exit(f"API error: {e}")
     return wrapper
 
 
-# ---------- команды ----------
+# ---------- commands ----------
 
 @die_on_api_error
 def cmd_squads(rw: Remnawave, args):
     resp = rw.internal_squads.get_internal_squads()
     if not resp.internal_squads:
-        print("Сквадов нет.")
+        print("No squads.")
         return
     for s in resp.internal_squads:
         inbound_tags = ", ".join(ib.tag for ib in s.inbounds) or "-"
@@ -152,21 +155,26 @@ def cmd_users(rw: Remnawave, args):
         fields = [f.strip() for f in args.fields.split(",") if f.strip()]
         unknown = [f for f in fields if f not in FIELDS]
         if unknown:
-            sys.exit(f"Неизвестные поля: {', '.join(unknown)}. Доступные: {', '.join(FIELDS)}")
+            sys.exit(f"Unknown fields: {', '.join(unknown)}. Available: {', '.join(FIELDS)}")
+
+    squad_uuids = set(resolve_squads(rw, args.squad)) if args.squad else None
 
     found = False
     for u in rw.users.iter_users(filters=filters):
+        user_squads = u.active_internal_squads or []
+        if squad_uuids is not None and not squad_uuids & {s.uuid for s in user_squads}:
+            continue
         found = True
         if fields:
             print("\t".join(FIELDS[f](u) for f in fields))
         else:
-            squads = ", ".join(s.name for s in (u.active_internal_squads or [])) or "-"
+            squads = ", ".join(s.name for s in user_squads) or "-"
             print(f"{u.id:<6} {u.username:<20} {u.status:<10} "
                   f"traffic={fmt_bytes(u.user_traffic.used_traffic_bytes)}/"
                   f"{fmt_limit(u.traffic_limit_bytes)}  "
                   f"expire={fmt_dt(u.expire_at)}  squads=[{squads}]")
     if not found:
-        print("Юзеры не найдены.", file=sys.stderr)
+        print("No users found.", file=sys.stderr)
 
 
 @die_on_api_error
@@ -198,7 +206,7 @@ def is_uuid(s: str) -> bool:
 
 
 def resolve_squads(rw: Remnawave, values: list) -> list:
-    """Принимает список uuid и/или имён сквадов, возвращает список uuid."""
+    """Takes a list of squad uuids and/or names, returns a list of uuids."""
     if not values:
         return []
     if all(is_uuid(v) for v in values):
@@ -222,7 +230,7 @@ def resolve_squads(rw: Remnawave, values: list) -> list:
 
     if unknown:
         available = ", ".join(s.name for s in squads) or "-"
-        sys.exit(f"Сквад(ы) не найдены: {', '.join(unknown)}. Доступные: {available}")
+        sys.exit(f"Squad(s) not found: {', '.join(unknown)}. Available: {available}")
 
     return result
 
@@ -231,14 +239,14 @@ def resolve_squads(rw: Remnawave, values: list) -> list:
 def cmd_create(rw: Remnawave, args):
     squad_uuids = resolve_squads(rw, args.squad or [])
     if not squad_uuids and not args.no_squad_prompt:
-        # если сквады не переданы, покажем список и попросим выбрать
+        # no squads given: show the list and hint how to assign one
         resp = rw.internal_squads.get_internal_squads()
         if resp.internal_squads:
-            print("Сквады не указаны (--squad). Доступные сквады:")
+            print("No squads given (--squad). Available squads:")
             for s in resp.internal_squads:
                 print(f"  {s.uuid}  {s.name}")
-            print("Пользователь будет создан без доступа ни к одному инбаунду.")
-            print("Передайте --squad <uuid> (можно несколько раз), чтобы назначить сквад.\n")
+            print("The user will be created without access to any inbound.")
+            print("Pass --squad <uuid|name> (repeatable) to assign a squad.\n")
 
     expire_at = (
         datetime.now(timezone.utc) + timedelta(days=args.days)
@@ -246,15 +254,23 @@ def cmd_create(rw: Remnawave, args):
         else datetime(2099, 1, 1, tzinfo=timezone.utc)
     )
 
+    # optional fields are omitted entirely: rw-sdk sends None as an explicit null,
+    # which the panel rejects
+    kwargs = {}
+    if squad_uuids:
+        kwargs["active_internal_squads"] = squad_uuids
+    if args.description:
+        kwargs["description"] = args.description
+    if args.telegram_id:
+        kwargs["telegram_id"] = args.telegram_id
+
     user = rw.users.create_user(
         username=args.username,
         expire_at=expire_at,
         traffic_limit_bytes=args.traffic_gb * 1024 ** 3 if args.traffic_gb else 0,
-        active_internal_squads=squad_uuids or None,
-        description=args.description or None,
-        telegram_id=args.telegram_id or None,
+        **kwargs,
     )
-    print(f"Создан пользователь #{user.id} ({user.username})")
+    print(f"Created user #{user.id} ({user.username})")
     print(f"  expire_at:    {fmt_dt(user.expire_at)}")
     print(f"  subscription: {user.subscription_url}")
 
@@ -263,49 +279,84 @@ def cmd_create(rw: Remnawave, args):
 def cmd_delete(rw: Remnawave, args):
     user = rw.users.get_user_by_username(args.username)
     if not args.yes:
-        confirm = input(f"Удалить пользователя '{user.username}' (id={user.id})? [y/N] ")
-        if confirm.strip().lower() not in ("y", "yes", "д", "да"):
-            print("Отменено.")
+        confirm = input(f"Delete user '{user.username}' (id={user.id})? [y/N] ")
+        if confirm.strip().lower() not in ("y", "yes"):
+            print("Cancelled.")
             return
     rw.users.delete_user(user.id)
-    print(f"Пользователь '{user.username}' удалён.")
+    print(f"User '{user.username}' deleted.")
 
 
-# ---------- парсер аргументов ----------
+def resolve_short_uuid(rw: Remnawave, value: str) -> str:
+    """Takes a username, subscription URL or short_uuid, returns short_uuid."""
+    if "/" in value:
+        from urllib.parse import urlparse
+        return urlparse(value).path.rstrip("/").rsplit("/", 1)[-1]
+    try:
+        return rw.users.get_user_by_username(value).short_uuid
+    except errors.NotFoundError:
+        return value
+
+
+@die_on_api_error
+def cmd_servers(rw: Remnawave, args):
+    short_uuid = resolve_short_uuid(rw, args.user)
+    if args.raw:
+        for link in rw.subscriptions.get_subscription_by_short_uuid_protected(short_uuid).links:
+            print(link)
+        return
+
+    configs = rw.subscriptions.get_raw_subscription_by_short_uuid(short_uuid).resolved_proxy_configs
+    if not configs:
+        print("No servers.", file=sys.stderr)
+        return
+    for item in configs:
+        c = item.root
+        protocol = getattr(c, "protocol", "-")
+        protocol = getattr(protocol, "value", protocol)
+        print(f"{c.final_remark:<20} {protocol:<8} {c.address}:{c.port}")
+
+
+# ---------- argument parser ----------
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="CLI для Remnawave (на базе rw-sdk)")
-    p.add_argument("-e", "--env-file", default=".env", help="путь к файлу с PANEL_URL/API_TOKEN (по умолчанию: .env)")
-    p.add_argument("-u", "--panel-url", help="переопределить PANEL_URL")
-    p.add_argument("-t", "--token", help="переопределить API_TOKEN")
+    p = argparse.ArgumentParser(description="CLI for Remnawave (built on rw-sdk)")
+    p.add_argument("-e", "--env-file", default=".env", help="file with PANEL_URL/API_TOKEN (default: .env)")
+    p.add_argument("-u", "--panel-url", help="override PANEL_URL")
+    p.add_argument("-t", "--token", help="override API_TOKEN")
 
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("squads", help="список сквадов")
+    sub.add_parser("squads", help="list squads")
 
-    p_users = sub.add_parser("users", help="список пользователей")
-    p_users.add_argument("-q", "--query", help="фильтр по username (contains)")
+    p_users = sub.add_parser("users", help="list users")
+    p_users.add_argument("-q", "--query", help="filter by username (contains)")
+    p_users.add_argument("-s", "--squad", action="append", help="only users in this squad, uuid or name (repeatable: -s X -s Y)")
     p_users.add_argument(
         "-f", "--fields",
-        help="список полей через запятую для машиночитаемого вывода (TSV, без заголовка). "
-             "Доступные поля: " + ", ".join(FIELDS),
+        help="comma-separated fields for machine-readable output (TSV, no header). "
+             "Available fields: " + ", ".join(FIELDS),
     )
 
-    p_user = sub.add_parser("user", help="инфо по одному пользователю")
+    p_user = sub.add_parser("user", help="show one user")
     p_user.add_argument("username")
 
-    p_create = sub.add_parser("create", help="создать пользователя")
+    p_create = sub.add_parser("create", help="create a user")
     p_create.add_argument("username")
-    p_create.add_argument("-s", "--squad", action="append", help="uuid или имя сквада (можно несколько раз: -s X -s Y)")
-    p_create.add_argument("-d", "--days", type=int, default=30, help="срок действия в днях от текущего момента (по умолчанию 30)")
-    p_create.add_argument("-g", "--traffic-gb", type=float, default=0, help="лимит трафика в GB, 0 = безлимит (по умолчанию)")
-    p_create.add_argument("-D", "--description", help="описание")
+    p_create.add_argument("-s", "--squad", action="append", help="squad uuid or name (repeatable: -s X -s Y)")
+    p_create.add_argument("-d", "--days", type=int, default=30, help="expires in N days from now (default: 30)")
+    p_create.add_argument("-g", "--traffic-gb", type=float, default=0, help="traffic limit in GB, 0 = unlimited (default)")
+    p_create.add_argument("-D", "--description", help="description")
     p_create.add_argument("-T", "--telegram-id", type=int, help="telegram id")
-    p_create.add_argument("-n", "--no-squad-prompt", action="store_true", help="не выводить список сквадов, если --squad не задан")
+    p_create.add_argument("-n", "--no-squad-prompt", action="store_true", help="don't list squads when --squad is not given")
 
-    p_delete = sub.add_parser("delete", help="удалить пользователя")
+    p_delete = sub.add_parser("delete", help="delete a user")
     p_delete.add_argument("username")
-    p_delete.add_argument("-y", "--yes", action="store_true", help="не спрашивать подтверждение")
+    p_delete.add_argument("-y", "--yes", action="store_true", help="don't ask for confirmation")
+
+    p_servers = sub.add_parser("servers", help="subscription servers of a user")
+    p_servers.add_argument("user", help="username, subscription URL or short_uuid")
+    p_servers.add_argument("-r", "--raw", action="store_true", help="print connection links (vless://...)")
 
     return p
 
@@ -321,6 +372,7 @@ def main():
         "user": cmd_user,
         "create": cmd_create,
         "delete": cmd_delete,
+        "servers": cmd_servers,
     }
     commands[args.command](rw, args)
 

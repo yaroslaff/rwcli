@@ -1,146 +1,163 @@
 # rwcli
 
-Простой CLI для [Remnawave](https://github.com/remnawave/backend) поверх
-[`rw-sdk`](https://pypi.org/project/rw-sdk/): список сквадов, список пользователей
-(с фильтром и выбором полей), инфо по одному пользователю, создание и удаление.
+Simple CLI for [Remnawave](https://github.com/remnawave/backend) built on
+[`rw-sdk`](https://pypi.org/project/rw-sdk/): list squads, list users
+(with filters and field selection), show a single user, create and delete users,
+show subscription servers.
 
-## Быстрая установка из репозитория
+## Quick install from the repository
 
 ```bash
 pipx install git+https://github.com/yaroslaff/rwcli.git
 ```
 
-Команда `rwcli` сразу появится в `PATH`. Обновить: `pipx upgrade rwcli`.
+The `rwcli` command is available in `PATH` right away. Upgrade: `pipx upgrade rwcli`.
 
-## Установка
+## Installation
 
-Вариант 1 — без установки пакета, просто скрипт + зависимость:
+Option 1 — no package install, just the script plus its dependency:
 
 ```bash
 pip install rw-sdk --break-system-packages
 ```
 
-и запускать `python3 rwcli.py ...`.
+then run `python3 rwcli.py ...`.
 
-Вариант 2 — установить как команду `rwcli` в систему/venv:
+Option 2 — install as the `rwcli` command system-wide or into a venv:
 
 ```bash
-pip install .          # из этой директории, где лежат pyproject.toml и rwcli.py
-# или через pipx, если хотите изолированное окружение:
+pip install .          # from this directory (with pyproject.toml and rwcli.py)
+# or with pipx for an isolated environment:
 pipx install .
 ```
 
-После этого доступна команда `rwcli` вместо `python3 rwcli.py`.
+After that, use `rwcli` instead of `python3 rwcli.py`.
 
-## Настройка
+## Configuration
 
-Скрипт ищет `PANEL_URL` и `API_TOKEN` в таком порядке:
+`PANEL_URL` and `API_TOKEN` are looked up in this order:
 
-1. флаги `-u/--panel-url` и `-t/--token`;
-2. переменные окружения `PANEL_URL` / `API_TOKEN`;
-3. файл `.env` в текущей директории (или указанный через `-e/--env-file`).
+1. flags `-u/--panel-url` and `-t/--token`;
+2. environment variables `PANEL_URL` / `API_TOKEN`;
+3. the `.env` file in the current directory (or the one given with `-e/--env-file`).
 
-Формат `.env`:
+`.env` format:
 
 ```env
 PANEL_URL="https://rw.example.com"
 API_TOKEN="eyJ...."
 ```
 
-`API_TOKEN` — токен, созданный на странице *API Tokens* в панели.
+`API_TOKEN` is a token created on the *API Tokens* page of the panel.
 
-## Команды
+## Commands
 
-### `squads` — список сквадов
+### `squads` — list squads
 
 ```bash
 rwcli squads
 ```
 
-Выводит uuid, имя, число участников и теги инбаундов каждого сквада.
+Prints the uuid, name, member count and inbound tags of each squad.
 
-### `users` — список пользователей
+### `users` — list users
 
 ```bash
 rwcli users
-rwcli users -q alice                       # фильтр по username (contains)
-rwcli users -f username,expire_at,status   # машиночитаемый вывод (TSV)
+rwcli users -q alice                       # filter by username (contains)
+rwcli users -s TnnlsPromo                  # only users in a squad (uuid or name, repeatable: -s X -s Y)
+rwcli users -f username,expire_at,status   # machine-readable output (TSV)
 ```
 
-Без `-f` — человекочитаемая таблица. С `-f поле1,поле2,...` — построчный
-TSV без заголовка (табуляция между полями), удобно для `awk`/`cut`/`while read`:
+Without `-f` — a human-readable table. With `-f field1,field2,...` — one line
+per user, TSV without a header (tab-separated), handy for `awk`/`cut`/`while read`:
 
 ```bash
 rwcli users -f username,squad_uuids | awk -F'\t' '{print $1}'
 ```
 
-Доступные поля:
+Available fields:
 
 `id, username, short_uuid, status, expire_at, traffic_limit_bytes,
 traffic_used_bytes, traffic_limit_strategy, telegram_id, email, description,
 tag, hwid_device_limit, squads, squad_uuids, subscription_url, vless_uuid,
 trojan_password, ss_password, created_at`
 
-`expire_at` / `created_at` в режиме `-f` отдаются в ISO 8601 UTC (не в
-человеческом формате), чтобы с ними можно было сортировать/парсить без боли.
+In `-f` mode `expire_at` / `created_at` are printed as ISO 8601 UTC (not the
+human-readable format), so they are easy to sort and parse.
 
-### `user <username>` — инфо по одному пользователю
+### `user <username>` — show one user
 
 ```bash
 rwcli user john_doe
 ```
 
-Полная карточка: id, статус, лимиты/расход трафика, сквады, ключи подключения
-(VLESS uuid, Trojan/SS пароли), ссылка на подписку.
+Full card: id, status, traffic limit/usage, squads, connection credentials
+(VLESS uuid, Trojan/SS passwords), subscription link.
 
-### `create <username>` — создать пользователя
+### `create <username>` — create a user
 
 ```bash
 rwcli create john_doe -s Default-Squad -d 90 -g 100
 ```
 
-| Флаг | Значение | По умолчанию |
+| Flag | Meaning | Default |
 |---|---|---|
-| `-s, --squad` | uuid **или имя** сквада (можно указать несколько раз) | без сквада |
-| `-d, --days` | срок действия в днях от текущего момента | `30` |
-| `-g, --traffic-gb` | лимит трафика в GB, `0` = безлимит | `0` |
-| `-D, --description` | описание | — |
+| `-s, --squad` | squad uuid **or name** (repeatable) | no squad |
+| `-d, --days` | expires in N days from now | `30` |
+| `-g, --traffic-gb` | traffic limit in GB, `0` = unlimited | `0` |
+| `-D, --description` | description | — |
 | `-T, --telegram-id` | telegram id | — |
-| `-n, --no-squad-prompt` | не выводить список сквадов, если `-s` не задан | выкл. |
+| `-n, --no-squad-prompt` | don't list squads when `-s` is not given | off |
 
-Имя сквада резолвится в uuid автоматически (регистронезависимо). Если сквад
-с таким именем не найден — скрипт покажет список доступных и остановится,
-не создавая пользователя без доступа по ошибке.
+Squad names are resolved to uuids automatically (case-insensitive). If no squad
+with that name exists, the script shows the available squads and stops, so a
+user is never created without access by mistake.
 
-### `delete <username>` — удалить пользователя
+### `delete <username>` — delete a user
 
 ```bash
-rwcli delete john_doe          # спросит подтверждение
-rwcli delete john_doe -y       # без подтверждения
+rwcli delete john_doe          # asks for confirmation
+rwcli delete john_doe -y       # no confirmation
 ```
 
-## Общие флаги
+### `servers <user>` — subscription servers
 
-| Флаг | Значение |
+```bash
+rwcli servers john_doe                              # by username
+rwcli servers https://sub.example.com/AbC123        # by subscription URL
+rwcli servers AbC123                                # by short_uuid
+rwcli servers john_doe --raw                        # vless://... links, one per line
+```
+
+By default — a table: name (remark, with flag), protocol, `address:port`.
+With `-r/--raw` — connection links, handy for pasting into a client or for scripts.
+
+The token needs the `subscriptions:raw` scope (table) and
+`subscriptions:by-short-uuid-protected` (`--raw`).
+
+## Global flags
+
+| Flag | Meaning |
 |---|---|
-| `-e, --env-file` | путь к файлу конфига (по умолчанию `.env`) |
-| `-u, --panel-url` | переопределить `PANEL_URL` |
-| `-t, --token` | переопределить `API_TOKEN` |
+| `-e, --env-file` | config file path (default `.env`) |
+| `-u, --panel-url` | override `PANEL_URL` |
+| `-t, --token` | override `API_TOKEN` |
 
-## Требования
+## Requirements
 
 - Python ≥ 3.10
-- [`rw-sdk`](https://pypi.org/project/rw-sdk/) ≥ 3.3.2 (устанавливается автоматически как зависимость)
+- [`rw-sdk`](https://pypi.org/project/rw-sdk/) ≥ 3.3.2 (installed automatically as a dependency)
 
-## Разработка
+## Development
 
 ```bash
 uv venv .venv && uv pip install --python .venv/bin/python -e '.[test]'
 .venv/bin/pytest
 ```
 
-Тесты не ходят в сеть: клиент Remnawave мокается.
+Tests don't touch the network: the Remnawave client is mocked.
 
-## Лицензия
+## License
 
 MIT.
