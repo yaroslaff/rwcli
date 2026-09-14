@@ -1,4 +1,4 @@
-# rw-cli
+# rwcli
 
 Простой CLI для [Remnawave](https://github.com/remnawave/backend) поверх
 [`rw-sdk`](https://pypi.org/project/rw-sdk/): список сквадов, список пользователей
@@ -10,7 +10,7 @@
 pipx install git+https://github.com/yaroslaff/rwcli.git
 ```
 
-Команда `rw-cli` сразу появится в `PATH`. Обновить: `pipx upgrade rw-cli`.
+Команда `rwcli` сразу появится в `PATH`. Обновить: `pipx upgrade rwcli`.
 
 ## Установка
 
@@ -22,7 +22,7 @@ pip install rw-sdk --break-system-packages
 
 и запускать `python3 rwcli.py ...`.
 
-Вариант 2 — установить как команду `rw-cli` в систему/venv:
+Вариант 2 — установить как команду `rwcli` в систему/venv:
 
 ```bash
 pip install .          # из этой директории, где лежат pyproject.toml и rwcli.py
@@ -30,7 +30,7 @@ pip install .          # из этой директории, где лежат p
 pipx install .
 ```
 
-После этого доступна команда `rw-cli` вместо `python3 rwcli.py`.
+После этого доступна команда `rwcli` вместо `python3 rwcli.py`.
 
 ## Настройка
 
@@ -54,7 +54,7 @@ API_TOKEN="eyJ...."
 ### `squads` — список сквадов
 
 ```bash
-rw-cli squads
+rwcli squads
 ```
 
 Выводит uuid, имя, число участников и теги инбаундов каждого сквада.
@@ -62,16 +62,16 @@ rw-cli squads
 ### `users` — список пользователей
 
 ```bash
-rw-cli users
-rw-cli users -q alice                       # фильтр по username (contains)
-rw-cli users -f username,expire_at,status   # машиночитаемый вывод (TSV)
+rwcli users
+rwcli users -q alice                       # фильтр по username (contains)
+rwcli users -f username,expire_at,status   # машиночитаемый вывод (TSV)
 ```
 
 Без `-f` — человекочитаемая таблица. С `-f поле1,поле2,...` — построчный
 TSV без заголовка (табуляция между полями), удобно для `awk`/`cut`/`while read`:
 
 ```bash
-rw-cli users -f username,squad_uuids | awk -F'\t' '{print $1}'
+rwcli users -f username,squad_uuids | awk -F'\t' '{print $1}'
 ```
 
 Доступные поля:
@@ -87,7 +87,7 @@ trojan_password, ss_password, created_at`
 ### `user <username>` — инфо по одному пользователю
 
 ```bash
-rw-cli user john_doe
+rwcli user john_doe
 ```
 
 Полная карточка: id, статус, лимиты/расход трафика, сквады, ключи подключения
@@ -96,7 +96,7 @@ rw-cli user john_doe
 ### `create <username>` — создать пользователя
 
 ```bash
-rw-cli create john_doe -s Default-Squad -d 90 -g 100
+rwcli create john_doe -s Default-Squad -d 90 -g 100
 ```
 
 | Флаг | Значение | По умолчанию |
@@ -115,8 +115,8 @@ rw-cli create john_doe -s Default-Squad -d 90 -g 100
 ### `delete <username>` — удалить пользователя
 
 ```bash
-rw-cli delete john_doe          # спросит подтверждение
-rw-cli delete john_doe -y       # без подтверждения
+rwcli delete john_doe          # спросит подтверждение
+rwcli delete john_doe -y       # без подтверждения
 ```
 
 ## Общие флаги
@@ -131,6 +131,15 @@ rw-cli delete john_doe -y       # без подтверждения
 
 - Python ≥ 3.10
 - [`rw-sdk`](https://pypi.org/project/rw-sdk/) ≥ 3.3.2 (устанавливается автоматически как зависимость)
+
+## Разработка
+
+```bash
+uv venv .venv && uv pip install --python .venv/bin/python -e '.[test]'
+.venv/bin/pytest
+```
+
+Тесты не ходят в сеть: клиент Remnawave мокается.
 
 ## Лицензия
 

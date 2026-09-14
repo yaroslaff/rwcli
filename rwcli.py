@@ -6,15 +6,15 @@
     pip install rw-sdk --break-system-packages   # или в venv
 
 Настройка (.env в текущем каталоге, или -e path/-u URL/-t TOKEN):
-    PANEL_URL="https://rw.26cm.monster"
+    PANEL_URL="https://rw.example.com"
     API_TOKEN="eyJ...."
 
 Команды:
-    rw_cli.py squads                    # список сквадов
-    rw_cli.py users [-q TEXT]           # список юзеров (фильтр по username)
-    rw_cli.py user <username>           # инфо по одному юзеру
-    rw_cli.py create <username> [опции] # создать юзера
-    rw_cli.py delete <username> [-y]    # удалить юзера
+    rwcli squads                    # список сквадов
+    rwcli users [-q TEXT] [-f F,..] # список юзеров (фильтр по username)
+    rwcli user <username>           # инфо по одному юзеру
+    rwcli create <username> [опции] # создать юзера
+    rwcli delete <username> [-y]    # удалить юзера
 """
 
 import argparse
@@ -29,7 +29,7 @@ from rw_sdk import Remnawave, errors
 # ---------- конфиг ----------
 
 def load_env(path: Path) -> dict:
-    """Простой парсер KEY="value" из rw.env, без внешних зависимостей."""
+    """Простой парсер KEY="value" из .env, без внешних зависимостей."""
     data = {}
     if not path.exists():
         return data
@@ -49,7 +49,7 @@ def get_client(args) -> Remnawave:
 
     if not panel_url or not token:
         sys.exit(
-            "Не найден PANEL_URL / API_TOKEN. Проверьте rw.env, "
+            f"Не найден PANEL_URL / API_TOKEN. Проверьте {args.env_file}, "
             "переменные окружения или флаги --panel-url/--token."
         )
     if panel_url.startswith("[") or "](" in panel_url:
@@ -64,13 +64,18 @@ def fmt_bytes(n) -> str:
     if n is None:
         return "-"
     if n == 0:
-        return "∞" if n == 0 else "0 B"
+        return "0 B"
     step = 1024.0
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if abs(n) < step:
             return f"{n:.1f} {unit}"
         n /= step
     return f"{n:.1f} PB"
+
+
+def fmt_limit(n) -> str:
+    """Лимит трафика: 0 в Remnawave означает безлимит."""
+    return "∞" if n == 0 else fmt_bytes(n)
 
 
 def fmt_dt(dt) -> str:
@@ -158,7 +163,7 @@ def cmd_users(rw: Remnawave, args):
             squads = ", ".join(s.name for s in (u.active_internal_squads or [])) or "-"
             print(f"{u.id:<6} {u.username:<20} {u.status:<10} "
                   f"traffic={fmt_bytes(u.user_traffic.used_traffic_bytes)}/"
-                  f"{fmt_bytes(u.traffic_limit_bytes)}  "
+                  f"{fmt_limit(u.traffic_limit_bytes)}  "
                   f"expire={fmt_dt(u.expire_at)}  squads=[{squads}]")
     if not found:
         print("Юзеры не найдены.", file=sys.stderr)
@@ -173,7 +178,7 @@ def cmd_user(rw: Remnawave, args):
     print(f"short_uuid:      {u.short_uuid}")
     print(f"status:          {u.status}")
     print(f"expire_at:       {fmt_dt(u.expire_at)}")
-    print(f"traffic:         {fmt_bytes(u.user_traffic.used_traffic_bytes)} / {fmt_bytes(u.traffic_limit_bytes)} ({u.traffic_limit_strategy})")
+    print(f"traffic:         {fmt_bytes(u.user_traffic.used_traffic_bytes)} / {fmt_limit(u.traffic_limit_bytes)} ({u.traffic_limit_strategy})")
     print(f"telegram_id:     {u.telegram_id or '-'}")
     print(f"email:           {u.email or '-'}")
     print(f"description:     {u.description or '-'}")
