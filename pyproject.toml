@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rwcli"
-version = "0.1.0"
-description = "CLI for Remnawave (squads, users, create/delete, subscription servers) built on rw-sdk"
+version = "0.2.0"
+description = "CLI for Remnawave (squads, users: ls/show/create/update/delete, subscription servers) built on rw-sdk"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

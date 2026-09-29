@@ -91,7 +91,7 @@ def test_fmt_limit():
 def test_users_table_zero_traffic(capsys):
     rw = MagicMock()
     rw.users.iter_users.return_value = [make_user(user_traffic=SimpleNamespace(used_traffic_bytes=0))]
-    rwcli.cmd_users(rw, parse("users"))
+    rwcli.cmd_user_ls(rw, parse("user", "ls"))
     assert "traffic=0 B/∞" in capsys.readouterr().out
 
 
@@ -142,19 +142,19 @@ def test_die_on_api_error_not_found():
 def test_users_fields_tsv(capsys):
     rw = MagicMock()
     rw.users.iter_users.return_value = [make_user()]
-    rwcli.cmd_users(rw, parse("users", "-f", "username,traffic_used_bytes,squads,expire_at"))
+    rwcli.cmd_user_ls(rw, parse("user", "ls", "-f", "username,traffic_used_bytes,squads,expire_at"))
     assert capsys.readouterr().out == "alice\t2048\tDefault\t2030-01-01T00:00:00+00:00\n"
 
 
 def test_users_unknown_field():
     with pytest.raises(SystemExit, match="Unknown fields: bogus"):
-        rwcli.cmd_users(MagicMock(), parse("users", "-f", "username,bogus"))
+        rwcli.cmd_user_ls(MagicMock(), parse("user", "ls", "-f", "username,bogus"))
 
 
 def test_users_empty(capsys):
     rw = MagicMock()
     rw.users.iter_users.return_value = []
-    rwcli.cmd_users(rw, parse("users"))
+    rwcli.cmd_user_ls(rw, parse("user", "ls"))
     assert "No users found" in capsys.readouterr().err
 
 
@@ -167,7 +167,7 @@ def test_users_squad_filter(capsys):
         make_user(username="bob", active_internal_squads=[other]),
         make_user(username="carol", active_internal_squads=None),
     ]
-    rwcli.cmd_users(rw, parse("users", "-s", "tnnlspromo", "-f", "username"))
+    rwcli.cmd_user_ls(rw, parse("user", "ls", "-s", "tnnlspromo", "-f", "username"))
     assert capsys.readouterr().out == "alice\n"
 
 
@@ -175,7 +175,7 @@ def test_users_squad_filter_unknown():
     rw = MagicMock()
     rw.internal_squads.get_internal_squads.return_value.internal_squads = [make_squad("TnnlsPromo")]
     with pytest.raises(SystemExit, match="Squad\\(s\\) not found: nope"):
-        rwcli.cmd_users(rw, parse("users", "-s", "nope"))
+        rwcli.cmd_user_ls(rw, parse("user", "ls", "-s", "nope"))
     rw.users.iter_users.assert_not_called()
 
 
@@ -184,7 +184,7 @@ def test_create(capsys):
     rw.internal_squads.get_internal_squads.return_value.internal_squads = [make_squad("Default")]
     rw.users.create_user.return_value = make_user(username="bob")
 
-    rwcli.cmd_create(rw, parse("create", "bob", "-s", "Default", "-d", "10", "-g", "2"))
+    rwcli.cmd_user_create(rw, parse("user", "create", "bob", "-s", "Default", "-d", "10", "-g", "2"))
 
     kw = rw.users.create_user.call_args.kwargs
     assert kw["username"] == "bob"
@@ -199,11 +199,54 @@ def test_create_omits_unset_optional_fields():
     rw = MagicMock()
     rw.users.create_user.return_value = make_user(username="bob")
 
-    rwcli.cmd_create(rw, parse("create", "bob", "-n"))
+    rwcli.cmd_user_create(rw, parse("user", "create", "bob", "-n"))
 
     kw = rw.users.create_user.call_args.kwargs
     for key in ("description", "telegram_id", "active_internal_squads"):
         assert key not in kw
+
+
+def test_update_sends_only_given_fields(capsys):
+    rw = MagicMock()
+    rw.users.update_user.return_value = make_user(traffic_limit_bytes=50 * 1024 ** 3)
+
+    rwcli.cmd_user_update(rw, parse("user", "update", "alice", "-g", "50"))
+
+    rw.users.update_user.assert_called_once_with(username="alice", traffic_limit_bytes=50 * 1024 ** 3)
+    assert "Updated user 'alice'" in capsys.readouterr().out
+
+
+def test_update_zero_traffic_is_unlimited():
+    rw = MagicMock()
+    rw.users.update_user.return_value = make_user()
+    rwcli.cmd_user_update(rw, parse("user", "update", "alice", "-g", "0"))
+    assert rw.users.update_user.call_args.kwargs["traffic_limit_bytes"] == 0
+
+
+def test_update_squad_and_days():
+    rw = MagicMock()
+    rw.internal_squads.get_internal_squads.return_value.internal_squads = [make_squad("Default")]
+    rw.users.update_user.return_value = make_user()
+
+    rwcli.cmd_user_update(rw, parse("user", "update", "alice", "-s", "default", "-d", "10"))
+
+    kw = rw.users.update_user.call_args.kwargs
+    assert kw["active_internal_squads"] == [SQUAD_UUID]
+    delta = kw["expire_at"] - datetime.now(timezone.utc)
+    assert timedelta(days=9, hours=23) < delta <= timedelta(days=10)
+    assert "traffic_limit_bytes" not in kw
+
+
+def test_update_nothing_given():
+    rw = MagicMock()
+    with pytest.raises(SystemExit, match="Nothing to update"):
+        rwcli.cmd_user_update(rw, parse("user", "update", "alice"))
+    rw.users.update_user.assert_not_called()
+
+
+def test_old_commands_removed():
+    with pytest.raises(SystemExit):
+        parse("users")
 
 
 def test_die_on_api_error_validation():
@@ -222,7 +265,7 @@ def test_delete_cancelled(monkeypatch):
     rw = MagicMock()
     rw.users.get_user_by_username.return_value = make_user()
     monkeypatch.setattr("builtins.input", lambda _: "n")
-    rwcli.cmd_delete(rw, parse("delete", "alice"))
+    rwcli.cmd_user_delete(rw, parse("user", "delete", "alice"))
     rw.users.delete_user.assert_not_called()
 
 
@@ -273,5 +316,5 @@ def test_servers_raw(capsys):
 def test_delete_yes():
     rw = MagicMock()
     rw.users.get_user_by_username.return_value = make_user(id=42)
-    rwcli.cmd_delete(rw, parse("delete", "alice", "-y"))
+    rwcli.cmd_user_delete(rw, parse("user", "delete", "alice", "-y"))
     rw.users.delete_user.assert_called_once_with(42)

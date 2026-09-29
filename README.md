@@ -2,7 +2,7 @@
 
 Simple CLI for [Remnawave](https://github.com/remnawave/backend) built on
 [`rw-sdk`](https://pypi.org/project/rw-sdk/): list squads, list users
-(with filters and field selection), show a single user, create and delete users,
+(with filters and field selection), show a single user, create, update and delete users,
 show subscription servers.
 
 ## Quick install from the repository
@@ -60,20 +60,27 @@ rwcli squads
 
 Prints the uuid, name, member count and inbound tags of each squad.
 
-### `users` — list users
+All user commands live under `rwcli user`: `ls`, `show`, `create`, `update`,
+`delete`.
+
+> **Interface change:** the old top-level commands `users`, `user NAME`,
+> `create` and `delete` were replaced by `user ls`, `user show NAME`,
+> `user create` and `user delete`. Update your scripts.
+
+### `user ls` — list users
 
 ```bash
-rwcli users
-rwcli users -q alice                       # filter by username (contains)
-rwcli users -s TnnlsPromo                  # only users in a squad (uuid or name, repeatable: -s X -s Y)
-rwcli users -f username,expire_at,status   # machine-readable output (TSV)
+rwcli user ls
+rwcli user ls -q alice                       # filter by username (contains)
+rwcli user ls -s TnnlsPromo                  # only users in a squad (uuid or name, repeatable: -s X -s Y)
+rwcli user ls -f username,expire_at,status   # machine-readable output (TSV)
 ```
 
 Without `-f` — a human-readable table. With `-f field1,field2,...` — one line
 per user, TSV without a header (tab-separated), handy for `awk`/`cut`/`while read`:
 
 ```bash
-rwcli users -f username,squad_uuids | awk -F'\t' '{print $1}'
+rwcli user ls -f username,squad_uuids | awk -F'\t' '{print $1}'
 ```
 
 Available fields:
@@ -86,19 +93,19 @@ trojan_password, ss_password, created_at`
 In `-f` mode `expire_at` / `created_at` are printed as ISO 8601 UTC (not the
 human-readable format), so they are easy to sort and parse.
 
-### `user <username>` — show one user
+### `user show <username>` — show one user
 
 ```bash
-rwcli user john_doe
+rwcli user show john_doe
 ```
 
 Full card: id, status, traffic limit/usage, squads, connection credentials
 (VLESS uuid, Trojan/SS passwords), subscription link.
 
-### `create <username>` — create a user
+### `user create <username>` — create a user
 
 ```bash
-rwcli create john_doe -s Default-Squad -d 90 -g 100
+rwcli user create john_doe -s Default-Squad -d 90 -g 100
 ```
 
 | Flag | Meaning | Default |
@@ -114,11 +121,36 @@ Squad names are resolved to uuids automatically (case-insensitive). If no squad
 with that name exists, the script shows the available squads and stops, so a
 user is never created without access by mistake.
 
-### `delete <username>` — delete a user
+### `user update <username>` — change a user
 
 ```bash
-rwcli delete john_doe          # asks for confirmation
-rwcli delete john_doe -y       # no confirmation
+rwcli user update john_doe -g 50            # set traffic limit to 50 GB
+rwcli user update john_doe -d 30 -s Default # expire in 30 days, squads = [Default]
+```
+
+Only the given flags are changed; everything else stays as it is. At least one
+flag is required.
+
+| Flag | Meaning |
+|---|---|
+| `-s, --squad` | squad uuid or name (repeatable); **replaces** the whole squad list |
+| `-d, --days` | expires in N days from now |
+| `-g, --traffic-gb` | traffic limit in GB, `0` = unlimited |
+| `-D, --description` | description |
+| `-T, --telegram-id` | telegram id |
+
+Mass update — combine with `user ls -f username` and `xargs`:
+
+```bash
+rwcli user ls -s TnnlsPromo -f username | xargs -n1 rwcli user update -g 50
+rwcli user ls -f username | xargs -n1 -P8 rwcli user update -g 50   # 8 in parallel
+```
+
+### `user delete <username>` — delete a user
+
+```bash
+rwcli user delete john_doe          # asks for confirmation
+rwcli user delete john_doe -y       # no confirmation
 ```
 
 ### `servers <user>` — subscription servers
